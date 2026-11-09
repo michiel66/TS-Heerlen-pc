@@ -13,7 +13,7 @@ De oorspronkelijke Android-repositories [TS-Heerlen-app](https://github.com/mich
 - De API-sleutel vind je in TeamSpeak 3 bij **Tools/Extra → Options/Opties → Addons → ClientQuery → Settings/Instellingen**.
 - Start TeamSpeak 3 en verbind met een server voordat je de Heerlen PC-app opent.
 
-## Wat werkt
+## Wat is geïmplementeerd (nog testen met een echte TeamSpeak-server)
 
 - Neon Windows-interface in donkerblauw, cyaan en groen
 - Weergave van online gebruikers en kanalen van het **actieve** TeamSpeak 3-tabblad
@@ -25,6 +25,10 @@ De oorspronkelijke Android-repositories [TS-Heerlen-app](https://github.com/mich
 - Thema- en gebruikersinstellingen lokaal bewaren
 
 Niet geïmplementeerd: een onafhankelijke TeamSpeak-audio-engine, zonder TS3-client verbinden met een server, native Android-APK-functionaliteit zoals mobiele knoppen en rogerpiep.
+
+## PTT instellen
+
+De groene PTT-knop en de F9-toets regelen via ClientQuery de microfoondemping van TeamSpeak 3. Deze sneltoets werkt alleen wanneer de Heerlen PC-app focus heeft. Gebruik in TeamSpeak 3 een passende opnamemodus (bijvoorbeeld continue overdracht of voice activation). Wanneer TeamSpeak 3 zelf op push-to-talk staat, kan zijn eigen PTT-bediening nog steeds nodig zijn. **Test microfoon en PTT met een tweede gebruiker voordat je dit voor belangrijke communicatie gebruikt.** Na het loslaten zet de Heerlen-knop de microfoon op gedempt; de oorspronkelijke mute-status wordt niet automatisch hersteld.
 
 ## EXE bouwen
 
