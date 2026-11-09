@@ -81,24 +81,13 @@ pub fn available() -> Vec<String> {
 
 fn candidates(chosen: &str) -> Vec<Device> {
     let host = cpal::default_host();
-    let mut devices = Vec::new();
+    // Never silently activate a *different* microphone than the one chosen.
     if chosen != DEFAULT_MIC && !chosen.is_empty() {
-        if let Ok(inputs) = host.input_devices() {
-            for d in inputs {
-                if d.name().ok().as_deref() == Some(chosen) {
-                    devices.push(d);
-                    break;
-                }
-            }
-        }
+        return host.input_devices().map(|inputs| {
+            inputs.filter(|device| device.name().ok().as_deref() == Some(chosen)).collect()
+        }).unwrap_or_default();
     }
-    if let Some(default) = host.default_input_device() {
-        devices.push(default);
-    }
-    if let Ok(inputs) = host.input_devices() {
-        devices.extend(inputs);
-    }
-    devices
+    host.default_input_device().into_iter().collect()
 }
 
 fn open_one(device: &Device, tx: mpsc::Sender<Vec<i16>>) -> Result<InputStream, String> {
