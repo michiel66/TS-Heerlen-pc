@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from heerlen.query import sort_channel_tree
 from heerlen.storage import load_settings, save_settings
-from heerlen.native import NativeWorker
+from heerlen.native import NativeWorker, list_microphones
 from heerlen.connect import SERVER, make_uri
 from heerlen.hotkeys import PTT_CHOICES, is_pressed
 from heerlen.background import BACKGROUNDS, BackgroundWidget, store_wallpaper
@@ -111,6 +111,22 @@ class SettingsDialog(QDialog):
         selected = config.get("ptt_key", "F9")
         self.ptt_choice.setCurrentText(selected if selected in PTT_CHOICES else "F9")
         layout.addWidget(self.ptt_choice)
+        layout.addWidget(QLabel("Windows microfoon"))
+        self.microphone_choice = QComboBox()
+        self.microphone_choice.addItems(list_microphones())
+        saved_mic = str(config.get("microphone", "Standaard (Windows)"))
+        if self.microphone_choice.findText(saved_mic) < 0:
+            self.microphone_choice.addItem(saved_mic)
+        self.microphone_choice.setCurrentText(saved_mic)
+        layout.addWidget(self.microphone_choice)
+        mic_hint = QLabel(
+            "Kies Standaard (Windows) of selecteer jouw headset/microfoon. "
+            "Als Windows geen microfoon ziet, blijft TeamSpeak wel verbonden. "
+            "Een gewijzigde microfoon wordt na opnieuw verbinden actief."
+        )
+        mic_hint.setObjectName("Hint")
+        mic_hint.setWordWrap(True)
+        layout.addWidget(mic_hint)
         hint = QLabel("Deze toets werkt ook buiten het Heerlen-venster. "
                       "Kies een toets die niet met andere programma's botst.")
         hint.setObjectName("Hint")
@@ -164,6 +180,7 @@ class SettingsDialog(QDialog):
     def values(self) -> dict:
         return {
             "ptt_key": self.ptt_choice.currentText(),
+            "microphone": self.microphone_choice.currentText(),
             "roger": self.roger_checkbox.isChecked(),
             "background": self.wallpaper_combo.currentText(),
         }
@@ -181,7 +198,7 @@ class MainWindow(QMainWindow):
         self.current_view = self.cfg.get("view", "kanalen")
         self.latest: dict = {}
         self.talking: set[int] = set()
-        self.worker: ClientQueryWorker | None = None
+        self.worker: NativeWorker | None = None
         self.bridge = Bridge()
         self.bridge.snapshot.connect(self.show_snapshot)
         self.bridge.notice.connect(self.show_notice)
@@ -242,7 +259,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(server_label)
 
         head_controls = box(vertical=False)
-        self.status_label = QLabel("●  Wachten op TeamSpeak 3...")
+        self.status_label = QLabel("●  Vul je naam in en verbind met Heerlen...")
         self.status_label.setObjectName("Status")
         head_controls.addWidget(self.status_label, 1)
         self.channels_btn = QPushButton("◫  Kanalen")
@@ -253,6 +270,9 @@ class MainWindow(QMainWindow):
         self.channels_btn.clicked.connect(lambda: self.switch_view("kanalen"))
         self.monitor_btn.clicked.connect(lambda: self.switch_view("monitor"))
         top_layout.addLayout(head_controls)
+        self.mic_indicator = QLabel("MICROFOON: wordt gecontroleerd bij verbinden")
+        self.mic_indicator.setObjectName("Hint")
+        top_layout.addWidget(self.mic_indicator)
         layout.addWidget(top)
 
         self.pages = QStackedWidget()
@@ -348,7 +368,7 @@ class MainWindow(QMainWindow):
         chat_col.addLayout(chat_row)
         row.addLayout(chat_col, 1)
         ptt_col = box(spacing=6)
-        hint = QLabel("HOUD INGEDRUKT • OF F9")
+        hint = QLabel("HOUD PTT INGEDRUKT • OF KIES JE EIGEN TOETS")
         hint.setObjectName("Hint")
         ptt_col.addWidget(hint, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.ptt_button = QPushButton("PTT")
@@ -398,6 +418,7 @@ class MainWindow(QMainWindow):
         self.worker = NativeWorker(
             nickname, self.bridge.snapshot.emit, self.bridge.notice.emit,
             roger_enabled=bool(self.cfg.get("roger", True)),
+            microphone=str(self.cfg.get("microphone", "Standaard (Windows)")),
         )
         self._requested_connection = True
         self.join_server_btn.setText("■  Verbinding verbreken")
@@ -419,12 +440,18 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dialog = SettingsDialog(self.cfg, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            old_microphone = self.cfg.get("microphone", "Standaard (Windows)")
             self.cfg.update(dialog.values())
             save_settings(self.cfg)
             self.background_view.set_preset(self.cfg.get("background", "Nachtblauw"))
             if self.worker is not None:
                 self.send_command("roger", "1" if self.cfg.get("roger") else "0")
-            self.statusBar().showMessage("Persoonlijke instellingen opgeslagen.", 6000)
+            if old_microphone != self.cfg.get("microphone") and self._requested_connection:
+                self.disconnect_server()
+                self.start_worker()
+                self.statusBar().showMessage("Nieuwe microfoon geselecteerd. Opnieuw verbinden met Heerlen...", 8000)
+            else:
+                self.statusBar().showMessage("Persoonlijke instellingen opgeslagen.", 6000)
 
     def send_command(self, kind: str, payload: str = ""):
         if self.worker is not None:
@@ -488,7 +515,7 @@ class MainWindow(QMainWindow):
         self.chat_log.append(message)
 
     def _set_connected(self, connected: bool):
-        self.ptt_button.setEnabled(connected)
+        self.ptt_button.setEnabled(connected and bool(self.latest.get("mic_ready", False)))
         self.send_chat_btn.setEnabled(connected)
         self.chat_input.setEnabled(connected)
         if not connected and self._ptt_pressed:
@@ -498,10 +525,21 @@ class MainWindow(QMainWindow):
         self.latest = snapshot
         connected = bool(snapshot.get("connected"))
         self._set_connected(connected)
-        name = snapshot.get("server_name") or "TeamSpeak 3"
+        name = snapshot.get("server_name") or "Heerlen"
+        if connected:
+            mic_name = snapshot.get("mic_name", "Microfoon onbekend")
+            mic_ok = bool(snapshot.get("mic_ready", False))
+            speaker_ok = bool(snapshot.get("output_ready", False))
+            mic_text = (f"MICROFOON: {mic_name}" if mic_ok
+                        else "MICROFOON NIET GEVONDEN • Instellingen > Windows microfoon")
+            self.mic_indicator.setText(mic_text + (" • LUIDSPREKER OK" if speaker_ok
+                                                   else " • Controleer je luidspreker"))
+            self.mic_indicator.setStyleSheet(f"color: {GREEN if mic_ok else '#ffb74d'};")
+        else:
+            self.mic_indicator.setText("MICROFOON: wordt gecontroleerd bij verbinden")
         self.status_label.setText(
             f"●  Verbonden: {name}" if connected
-            else "●  Niet verbonden — " + snapshot.get("problem", "Controleer ClientQuery.")
+            else "●  Niet verbonden — " + snapshot.get("problem", "Vul je naam in en klik Verbinden.")
         )
         self.status_label.setStyleSheet(
             f"color:{GREEN if connected else '#ffb74d'};"
@@ -611,7 +649,11 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
             # Never leave the microphone open after switching away from this app.
-            self.release_ptt()
+            # Global PTT remains available when another application is active.
+            # Cancel any mouse-button hold when the window loses focus.
+            if not self._hotkey_held:
+                self._button_ptt_held = False
+                self.release_ptt()
         super().changeEvent(event)
 
     def closeEvent(self, event):
