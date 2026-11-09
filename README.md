@@ -22,7 +22,7 @@ Deze update is gebaseerd op de architectuur van [TS-Heerlen-3D-Cafe](https://git
 - De audio-engine gebruikt het door de microfoon ondersteunde opnameformaat (bijvoorbeeld 44.100 Hz stereo of 48.000 Hz mono) en zet dat om naar 48.000 Hz mono voor TeamSpeak Opus.
 - Wanneer geen opnameapparaat kan worden gestart, blijft de TeamSpeak-serververbinding actief en blijven de kanalen/chat/online gebruikers zichtbaar. PTT is dan uitgeschakeld.
 - Controleer bij een ontbrekende microfoon Windows **Instellingen > Privacy en beveiliging > Microfoon > Desktop-apps toegang tot microfoon geven**, daarna **Systeem > Geluid > Invoer**. Herstart de app na het aanpassen van de Windows-toestemming.
-- Als ook de luidspreker niet kan worden gestart, wordt dat apart gemeld zonder de TeamSpeak-verbinding te beëindigen.
+- De luidspreker gebruikt nu eveneens het daadwerkelijke door Windows ondersteunde formaat (zoals 48 kHz stereo) en past inkomende TeamSpeak Opus-spraak daarop aan. Als een uitvoerapparaat niet kan worden gestart, wordt dat apart gemeld zonder de TeamSpeak-verbinding te beëindigen.
 - De unit tests controleren de omzetting van 44,1 kHz stereo naar 48 kHz mono; echte microfoons en de live server moeten op een Windows-pc worden getest.
 
 ## Techniek en beperkingen
