@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
             self.nickname_field.setEnabled(True)
 
     def press_ptt(self):
-        if not self.latest.get("connected") or self._ptt_pressed:
+        if not self.latest.get("connected") or not self.latest.get("mic_ready") or self._ptt_pressed:
             return
         self._ptt_pressed = True
         self.send_command("ptt_on")
