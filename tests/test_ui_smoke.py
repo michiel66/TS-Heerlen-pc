@@ -23,10 +23,26 @@ class UISmokeTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_without_microphone_server_stays_connected(self):
+        window = MainWindow()
+        try:
+            window.show_snapshot({
+                "connected": True, "server_name": "Heerlen", "mic_ready": False,
+                "output_ready": False, "channels": [], "users": [], "talking": [],
+            })
+            self.assertFalse(window.ptt_button.isEnabled())
+            self.assertIn("NIET GEVONDEN", window.mic_indicator.text())
+            self.assertIn("Verbonden", window.status_label.text())
+            window.press_ptt()
+            self.assertFalse(window._ptt_pressed)
+        finally:
+            window.close()
+
     def test_user_settings(self):
         dialog = SettingsDialog({"ptt_key": "F10", "roger": False, "background": "Neon paars"})
         result = dialog.values()
         self.assertEqual(result["ptt_key"], "F10")
+        self.assertEqual(result["microphone"], "Standaard (Windows)")
         self.assertFalse(result["roger"])
         self.assertEqual(result["background"], "Neon paars")
         dialog.close()
