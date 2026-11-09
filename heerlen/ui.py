@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QKeyEvent
+from PySide6.QtGui import QBrush, QColor, QIcon, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSplitter,
@@ -448,7 +448,7 @@ class MainWindow(QMainWindow):
             name = channel.get("channel_name", f"Kanaal {cid}")
             entry = QTreeWidgetItem([f"▣  {name}"])
             entry.setData(0, Qt.ItemDataRole.UserRole, cid)
-            entry.setForeground(0, QColor(CYAN))
+            entry.setForeground(0, QBrush(QColor(CYAN)))
             if parent is None:
                 self.channel_tree.addTopLevelItem(entry)
             else:
@@ -460,7 +460,7 @@ class MainWindow(QMainWindow):
                 uid = int(user.get("clid", 0))
                 active = uid in self.talking
                 child = QTreeWidgetItem([f"{'●' if active else '○'}  {username}"])
-                child.setForeground(0, QColor(GREEN if active else TEXT))
+                child.setForeground(0, QBrush(QColor(GREEN if active else TEXT)))
                 entry.addChild(child)
             entry.setExpanded(True)
         self.quick_users.clear()
@@ -500,7 +500,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(
                 f"{'●' if active else '○'}   {name}     • {label}\n      {channel}"
             )
-            item.setForeground(QColor(GREEN if active else TEXT))
+            item.setForeground(QBrush(QColor(GREEN if active else TEXT)))
             self.monitor_list.addItem(item)
 
     def closeEvent(self, event):
