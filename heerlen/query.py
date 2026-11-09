@@ -301,27 +301,31 @@ class ClientQueryWorker(threading.Thread):
                 except QueryError:
                     pass
                 self.notify("Verbonden met TeamSpeak ClientQuery.")
+                next_poll = 0.0
                 while not self.stop_event.is_set():
-                    while True:
-                        try:
-                            kind, payload = self.commands.get_nowait()
-                        except queue.Empty:
-                            break
+                    # Process PTT/key events promptly; never wait for the polling interval.
+                    timeout = max(0.0, min(0.1, next_poll - time.monotonic()))
+                    try:
+                        kind, payload = self.commands.get(timeout=timeout)
+                    except queue.Empty:
+                        kind, payload = None, ""
+                    if kind:
                         try:
                             self._execute(conn, kind, payload)
                         except (QueryError, OSError) as exc:
                             self.notify(f"Actie mislukt: {exc}")
-                    try:
-                        self.publish(self._snapshot(conn))
-                    except QueryError as exc:
-                        self.my_id = 0
-                        self.channel_id = 0
-                        self.talking.clear()
-                        self.publish(Snapshot(problem=(
-                            "TeamSpeak 3 draait, maar er is nog geen actief server-tabblad: "
-                            + str(exc)
-                        )).as_dict())
-                    self.stop_event.wait(self.interval)
+                    if time.monotonic() >= next_poll:
+                        try:
+                            self.publish(self._snapshot(conn))
+                        except QueryError as exc:
+                            self.my_id = 0
+                            self.channel_id = 0
+                            self.talking.clear()
+                            self.publish(Snapshot(problem=(
+                                "TeamSpeak 3 draait, maar er is nog geen actief server-tabblad: "
+                                + str(exc)
+                            )).as_dict())
+                        next_poll = time.monotonic() + self.interval
             except (QueryError, OSError, TimeoutError) as exc:
                 self.publish(Snapshot(problem=(
                     "ClientQuery niet bereikbaar: " + str(exc)
