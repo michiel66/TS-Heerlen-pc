@@ -1,0 +1,16 @@
+[package]
+name = "heerlen-native"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tslib-core = { path = "../../crates/tslib-core" }
+tslib-audio = { path = "../../crates/tslib-audio" }
+tokio = { version = "1.36", features = ["full"] }
+serde_json = "1.0"
+anyhow = "1.0"
+
+[[bin]]
+name = "heerlen-native"
+path = "src/main.rs"
