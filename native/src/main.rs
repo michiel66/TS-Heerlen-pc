@@ -4,15 +4,16 @@
 //! User secrets are not printed to stdout. All server traffic goes directly to TS.
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 mod microphone;
+mod speaker;
 use std::f32::consts::PI;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tslib_audio::codec::{Encoder, OpusCodec};
-use tslib_audio::{AudioConfig, AudioManager};
+use tslib_audio::codec::{Decoder, Encoder, OpusCodec, OpusDecoder};
+use tslib_audio::AudioConfig;
 use tslib_core::{Client, ClientConfig, Event, Identity};
 use tslib_core::events::AudioCodec;
 
@@ -80,17 +81,20 @@ async fn run_main() -> Result<()> {
 
     let mut audio_config = AudioConfig::default();
     audio_config.vad_enabled = false; // transmit only while PTT is pressed
-    let audio = AudioManager::new(audio_config.clone())
-        .context("Opus-codec initialisatie mislukt")?;
-    // Never disconnect from the TeamSpeak server if Windows audio fails.
-    // Cafe uses a separate Godot microphone stream for exactly this reason.
-    let playback_ready = match audio.start_playback().await {
-        Ok(()) => true,
+    // Windows output is also independent of TeamSpeak networking. Use
+    // the system's actual supported rate/channels rather than 48k mono.
+    let speaker = match speaker::open() {
+        Ok(value) => {
+            notice(format!("Windows luidspreker gereed: {} ({})", value.name, value.format));
+            Some(value)
+        }
         Err(err) => {
-            notice(format!("TeamSpeak verbonden; luidspreker kon niet starten: {}. Controleer Windows audio-uitvoer.", err));
-            false
+            notice(format!("TeamSpeak blijft verbonden, maar luidspreker niet beschikbaar: {}", err));
+            None
         }
     };
+    let playback_ready = speaker.is_some();
+    let mut decoders = HashMap::<(u16, u8), OpusDecoder>::new();
     let (frame_tx, mut audio_rx) = mpsc::channel::<Vec<i16>>(48);
     let microphone = match microphone::open(requested_mic, frame_tx) {
         Ok(mic) => {
@@ -189,9 +193,36 @@ async fn run_main() -> Result<()> {
             match event {
                 Event::AudioReceived { user_id, data, codec, .. } => {
                     let codec_id = codec.id();
-                    if playback_ready {
-                        if let Err(err) = audio.process_incoming(user_id, &data, codec_id).await {
-                            notice(format!("Ontvangen audio mislukt: {}", err));
+                    if let Some(output) = &speaker {
+                        if codec_id == 4 || codec_id == 5 {
+                            let key = (user_id, codec_id);
+                            let channels: u16 = if codec_id == 5 { 2 } else { 1 };
+                            if !decoders.contains_key(&key) {
+                                let audio_spec = AudioConfig {
+                                    channels,
+                                    ..AudioConfig::default()
+                                };
+                                match OpusCodec::new(audio_spec).and_then(|c| c.create_decoder()) {
+                                    Ok(decoder) => { decoders.insert(key, decoder); }
+                                    Err(err) => notice(format!("Opus-decoder niet beschikbaar: {}", err)),
+                                }
+                            }
+                            if let Some(decoder) = decoders.get_mut(&key) {
+                                let mut raw = vec![0_i16; 5760 * channels as usize];
+                                match decoder.decode(&data, &mut raw) {
+                                    Ok(len) => {
+                                        if channels == 1 {
+                                            output.push(&raw[..len]);
+                                        } else {
+                                            let mono: Vec<i16> = raw[..len].chunks_exact(2)
+                                                .map(|pair| ((pair[0] as i32 + pair[1] as i32) / 2) as i16)
+                                                .collect();
+                                            output.push(&mono);
+                                        }
+                                    }
+                                    Err(err) => notice(format!("Opus ontvangen audio fout: {}", err)),
+                                }
+                            }
                         }
                     }
                 },
@@ -199,7 +230,7 @@ async fn run_main() -> Result<()> {
                 Event::TalkStatusStop { user_id } => { speaking.remove(&user_id); },
                 Event::UserLeft { user, .. } => {
                     speaking.remove(&user.id);
-                    audio.remove_user(user.id).await;
+                    decoders.retain(|(uid, _), _| *uid != user.id);
                 },
                 Event::TextMessage { sender_name, message, .. } => {
                     emit(json!({"type": "chat", "message": format!("{}: {}", sender_name, message)}));
@@ -235,8 +266,6 @@ async fn run_main() -> Result<()> {
     }
     // Always stop microphone transmission, even on graceful shutdown.
     let _ = client.set_input_muted(true);
-    let _ = audio.stop_capture().await;
-    let _ = audio.stop_playback().await;
     let _ = client.disconnect();
     emit(json!({"type": "closed"}));
     Ok(())
