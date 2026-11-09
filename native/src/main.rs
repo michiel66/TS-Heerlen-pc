@@ -53,6 +53,11 @@ async fn run_main() -> Result<()> {
         generated.save(&identity_path).context("Identiteit opslaan mislukt")?;
         generated
     };
+    if identity.security_level() < 8 {
+        notice("Eerste start: TeamSpeak-identiteit voorbereiden (beveiligingsniveau 8)...");
+        identity.improve(8).context("TeamSpeak-identiteit verbeteren mislukt")?;
+        identity.save(&identity_path).context("TeamSpeak-identiteit bewaren mislukt")?;
+    }
     identity.set_nickname(nickname.to_string());
     let config = ClientConfig::builder()
         .address(HOST)
