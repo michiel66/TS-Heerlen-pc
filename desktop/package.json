@@ -31,8 +31,7 @@
       "target": [
         "portable",
         "nsis"
-      ],
-      "artifactName": "TeamSpeak-Heerlen-PC-${version}-${arch}.${ext}"
+      ]
     },
     "nsis": {
       "oneClick": false,
