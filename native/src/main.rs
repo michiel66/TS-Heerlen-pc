@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+mod microphone;
 use std::f32::consts::PI;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -36,8 +37,13 @@ fn main() {
 #[tokio::main(flavor = "current_thread")]
 async fn run_main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--list-microphones") {
+        emit(json!({"type": "devices", "microphones": microphone::available()}));
+        return Ok(());
+    }
     let nickname = args.get(1).context("Gebruikersnaam ontbreekt")?.trim();
     let identity_file = args.get(2).context("Identiteitsbestand ontbreekt")?;
+    let requested_mic = args.get(3).map(String::as_str).unwrap_or(microphone::DEFAULT_MIC);
     if nickname.chars().count() < 3 || nickname.chars().count() > 30 ||
        nickname.chars().any(|ch| ch.is_control()) {
         anyhow::bail!("Gebruikersnaam moet 3 tot 30 gewone tekens bevatten");
@@ -72,11 +78,35 @@ async fn run_main() -> Result<()> {
     let mut audio_config = AudioConfig::default();
     audio_config.vad_enabled = false; // transmit only while PTT is pressed
     let audio = AudioManager::new(audio_config.clone())
-        .context("Windows audio-initialisatie mislukt")?;
-    let mut audio_rx = audio.start_capture().await
-        .context("Geen werkende microfoon gevonden")?;
-    audio.start_playback().await.context("Geen werkende luidspreker gevonden")?;
-    emit(json!({"type": "notice", "message": "Zelfstandig verbonden. Microfoon staat op PTT."}));
+        .context("Opus-codec initialisatie mislukt")?;
+    // Never disconnect from the TeamSpeak server if Windows audio fails.
+    // Cafe uses a separate Godot microphone stream for exactly this reason.
+    let playback_ready = match audio.start_playback().await {
+        Ok(()) => true,
+        Err(err) => {
+            notice(format!("TeamSpeak verbonden; luidspreker kon niet starten: {}. Controleer Windows audio-uitvoer.", err));
+            false
+        }
+    };
+    let (frame_tx, mut audio_rx) = mpsc::channel::<Vec<i16>>(48);
+    let microphone = match microphone::open(requested_mic, frame_tx) {
+        Ok(mic) => {
+            notice(format!("Windows microfoon gevonden: {} ({})", mic.name, mic.format));
+            Some(mic)
+        }
+        Err(err) => {
+            notice(format!("TeamSpeak blijft verbonden, maar microfoon niet beschikbaar: {}. Selecteer een andere microfoon bij Instellingen.", err));
+            None
+        }
+    };
+    let mut mic_encoder = OpusCodec::new(audio_config.clone())?.create_encoder()?;
+    let mut encoded_frame = vec![0_u8; 4000];
+    emit(json!({
+        "type": "audio_status", "mic_ready": microphone.is_some(),
+        "mic_name": microphone.as_ref().map(|m| m.name.as_str()).unwrap_or("Geen microfoon"),
+        "output_ready": playback_ready,
+    }));
+    emit(json!({"type": "notice", "message": "Zelfstandig verbonden. PTT is klaar zodra de microfoon beschikbaar is."}));
 
     let (cmd_tx, mut commands) = mpsc::unbounded_channel::<Value>();
     std::thread::spawn(move || {
@@ -104,7 +134,9 @@ async fn run_main() -> Result<()> {
             let action = command["action"].as_str().unwrap_or("");
             match action {
                 "ptt_on" => {
-                    if !tx {
+                    if microphone.is_none() {
+                        notice("PTT niet beschikbaar: geen microfoon. De serververbinding blijft actief.");
+                    } else if !tx {
                         if let Err(err) = client.set_input_muted(false) {
                             notice(format!("Microfoon kon niet aan: {}", err));
                         } else {
@@ -154,8 +186,10 @@ async fn run_main() -> Result<()> {
             match event {
                 Event::AudioReceived { user_id, data, codec, .. } => {
                     let codec_id = codec.id();
-                    if let Err(err) = audio.process_incoming(user_id, &data, codec_id).await {
-                        notice(format!("Ontvangen audio mislukt: {}", err));
+                    if playback_ready {
+                        if let Err(err) = audio.process_incoming(user_id, &data, codec_id).await {
+                            notice(format!("Ontvangen audio mislukt: {}", err));
+                        }
                     }
                 },
                 Event::TalkStatusStart { user_id, .. } => { speaking.insert(user_id); },
@@ -175,16 +209,23 @@ async fn run_main() -> Result<()> {
                 _ => {},
             }
         }
-        // Capture is continuous but audio NEVER leaves the PC outside PTT.
-        while let Ok(packet) = audio_rx.try_recv() {
-            if tx && packet.voice_activity {
-                if let Err(err) = client.send_audio(&packet.data, AudioCodec::OpusVoice) {
-                    notice(format!("Zenden mislukt: {}", err));
+        // The Windows capture callback supplies 48 kHz mono PCM in 20-ms
+        // frames, adapting 44.1-kHz/stereo/i16/u16 devices automatically.
+        // Raw PCM is discarded until PTT is actually pressed.
+        while let Ok(pcm) = audio_rx.try_recv() {
+            if tx {
+                match mic_encoder.encode(&pcm, &mut encoded_frame) {
+                    Ok(len) => {
+                        if let Err(err) = client.send_audio(&encoded_frame[..len], AudioCodec::OpusVoice) {
+                            notice(format!("Zenden mislukt: {}", err));
+                        }
+                    }
+                    Err(err) => notice(format!("Microfoon-Opus fout: {}", err)),
                 }
             }
         }
         if Instant::now() >= next_snapshot {
-            snapshot(&client, &speaking);
+            snapshot(&client, &speaking, microphone.as_ref(), playback_ready);
             next_snapshot = Instant::now() + Duration::from_millis(650);
         }
         tokio::time::sleep(Duration::from_millis(4)).await;
@@ -198,7 +239,7 @@ async fn run_main() -> Result<()> {
     Ok(())
 }
 
-fn snapshot(client: &Client, talking: &HashSet<u16>) {
+fn snapshot(client: &Client, talking: &HashSet<u16>, microphone: Option<&microphone::InputStream>, output_ready: bool) {
     let users = client.users();
     let channels = client.channels();
     let my_id = client.client_id().unwrap_or(0);
@@ -207,6 +248,9 @@ fn snapshot(client: &Client, talking: &HashSet<u16>) {
     emit(json!({
         "type": "snapshot",
         "connected": client.is_connected(),
+        "mic_ready": microphone.is_some(),
+        "mic_name": microphone.map(|m| m.name.as_str()).unwrap_or("Geen microfoon"),
+        "output_ready": output_ready,
         "server_name": server,
         "channel_id": own_channel,
         "my_id": my_id,
