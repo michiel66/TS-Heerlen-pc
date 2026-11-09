@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
             return
         self._ptt_pressed = True
         self.send_command("ptt_on")
-        self.ptt_button.setText("TX ●")
+        self.ptt_button.setText("PTT ●")
         self.statusBar().showMessage("PTT ingedrukt: TeamSpeak-microfoon tijdelijk open.")
 
     def release_ptt(self):
@@ -408,8 +408,14 @@ class MainWindow(QMainWindow):
         self.online_count.setText(f"{len(users)} ONLINE")
         self.speaking_count.setText(f"{len(speaking)} SPREKERS")
         self.quick_count.setText(f"{len(users)} online")
-        is_tx = my_id in speaking or self._ptt_pressed
-        is_rx = any(uid != my_id for uid in speaking)
+        is_tx = my_id in speaking
+        my_channel_id = int(snapshot.get("channel_id", 0))
+        audible_users = {
+            int(user.get("clid", 0))
+            for user in users
+            if int(user.get("cid", 0)) == my_channel_id
+        }
+        is_rx = any(uid != my_id and uid in audible_users for uid in speaking)
         self.rx_tx.setText(
             f"RX  {'● ACTIEF' if is_rx else '○ RUST'}"
             f"       TX  {'● ACTIEF' if is_tx else '○ RUST'}"
