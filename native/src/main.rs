@@ -73,7 +73,10 @@ async fn run_main() -> Result<()> {
     notice(format!("Direct verbinden met {} als {}...", HOST, nickname));
     let mut client = Client::connect(config).context("Kan server niet bereiken")?;
     client.wait_connected().await.context("TeamSpeak-verbinding geweigerd")?;
-    client.set_input_muted(true).context("Start met microfoon gedempt mislukt")?;
+    if let Err(err) = client.set_input_muted(true) {
+        notice(format!("Microfoon dempen bij opstarten niet beschikbaar: {}", err));
+        // No audio packets are sent until explicit PTT, so this is safe.
+    }
 
     let mut audio_config = AudioConfig::default();
     audio_config.vad_enabled = false; // transmit only while PTT is pressed
