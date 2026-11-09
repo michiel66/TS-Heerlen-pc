@@ -64,7 +64,7 @@ connect = r'''<section className={"ptt-android-view heerlen-bg-" + heerlenBackgr
               >{connecting ? "Verbinden…" : "Verbinden met Heerlen"}</button>
               {connectError && <span className="heerlen-connect-error">{String(connectError)}</span>}
             </div>
-          }'''
+          )}'''
 exactly_once(anchor, connect, "eenvoudig inloggen met alleen naam")
 
 # The color choices are local to this Windows app and never affect the mic path.

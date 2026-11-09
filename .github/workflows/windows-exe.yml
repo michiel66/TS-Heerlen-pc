@@ -70,6 +70,15 @@ jobs:
           grep -F 'setPushToTalk' ptt-template/upstream/web/src/App.tsx
           grep -F 'heerlen.mijnts3.nl' ptt-template/upstream/web/src/App.tsx
 
+      - name: Heerlen gebruikersinterface bouwen
+        shell: bash
+        env:
+          VITE_DONATE_URL: ""
+        run: |
+          cd ptt-template/upstream/web
+          npm ci
+          npm run build
+
       - name: Zelfstandige TeamSpeak-connector compileren
         shell: bash
         run: |
@@ -83,15 +92,6 @@ jobs:
           npm ci
           npm run build
           npm prune --omit=dev
-
-      - name: Heerlen gebruikersinterface bouwen
-        shell: bash
-        env:
-          VITE_DONATE_URL: ""
-        run: |
-          cd ptt-template/upstream/web
-          npm ci
-          npm run build
 
       - name: Runtime van echte TeamSpeak RX/TX en microfoon verpakken
         shell: bash
