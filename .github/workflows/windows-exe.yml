@@ -69,6 +69,12 @@ jobs:
           Copy-Item 'tslib/target/release/heerlen-native.exe' 'native/bin/heerlen-native.exe'
           if (-not (Test-Path "native/bin/heerlen-native.exe")) { throw "Audio-engine ontbreekt" }
 
+      - name: Test automatische microfoonformaten (44100 stereo en 48000 mono)
+        shell: pwsh
+        run: |
+          cargo test --release -p heerlen-native --manifest-path tslib/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Windows-microfoon omzettingstest mislukt" }
+
       - name: Windows-icoon genereren
         run: python build_icon.py
       - name: Windows EXE bouwen
