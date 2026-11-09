@@ -25,7 +25,7 @@ def load_settings() -> dict:
 def save_settings(config: dict) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    safe = {k: v for k, v in config.items() if k in {"view", "window_geometry"}}
+    safe = {k: v for k, v in config.items() if k in {"view", "window_geometry", "nickname", "ptt_key", "roger", "background"}}
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(safe, indent=2), encoding="utf-8")
     temporary.replace(path)
