@@ -11,6 +11,7 @@ on:
       - "build_icon.py"
       - "requirements.txt"
       - "tests/**"
+      - "native/**"
       - ".github/workflows/windows-exe.yml"
 
 permissions:
@@ -20,7 +21,7 @@ jobs:
   windows-exe:
     name: Windows 64-bit EXE bouwen
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - name: Project ophalen
         uses: actions/checkout@v4
@@ -36,10 +37,42 @@ jobs:
           python -m pip install -r requirements.txt "pyinstaller>=6.11,<7" "Pillow>=11,<13"
       - name: Unit tests uitvoeren
         run: python -m unittest discover -s tests -v
+      - name: Rust toolchain installeren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust broncode van Android-audio-engine ophalen
+        uses: actions/checkout@v4
+        with:
+          repository: wslinnn/tslib_multi
+          ref: 8e0bc1150b548f31e0cc859ae8b9d488bd355038
+          path: tslib
+
+      - name: Zelfstandige Windows-audio-engine toevoegen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'tslib/examples/heerlen-desktop' | Out-Null
+          Copy-Item -Path 'native/Cargo.toml' -Destination 'tslib/examples/heerlen-desktop/Cargo.toml'
+          Copy-Item -Path 'native/src' -Destination 'tslib/examples/heerlen-desktop/src' -Recurse
+          $cargo = 'tslib/Cargo.toml'
+          $contents = Get-Content -Path $cargo -Raw
+          $contents = $contents.Replace('"examples/send-msg",', '"examples/send-msg",' + "`n" + '    "examples/heerlen-desktop",')
+          Set-Content -Path $cargo -Value $contents
+
+      - name: Native Rust TeamSpeak-client met Opus RX/TX bouwen
+        shell: pwsh
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: |
+          cargo build --release -p heerlen-native --manifest-path tslib/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Rust audio-engine build mislukt" }
+          New-Item -ItemType Directory -Force -Path 'native/bin' | Out-Null
+          Copy-Item 'tslib/target/release/heerlen-native.exe' 'native/bin/heerlen-native.exe'
+          if (-not (Test-Path "native/bin/heerlen-native.exe")) { throw "Audio-engine ontbreekt" }
+
       - name: Windows-icoon genereren
         run: python build_icon.py
       - name: Windows EXE bouwen
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Teamspeak-Heerlen-PC" --icon "assets/heerlen.ico" --add-data "assets/logo.svg;assets" main.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Teamspeak-Heerlen-PC" --icon "assets/heerlen.ico" --add-data "assets/logo.svg;assets" --add-binary "native/bin/heerlen-native.exe;." main.py
       - name: EXE controleren en checksum maken
         shell: pwsh
         run: |
