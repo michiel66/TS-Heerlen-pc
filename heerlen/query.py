@@ -271,10 +271,15 @@ class ClientQueryWorker(threading.Thread):
             users = conn.command("clientlist")
         users = [u for u in users if u.get("client_type", "0") == "0"]
         current_ids = {_int(u.get("clid")) for u in users}
-        self.talking.intersection_update(current_ids)
-        for u in users:
-            if u.get("client_flag_talking") == "1":
-                self.talking.add(_int(u.get("clid")))
+        if any("client_flag_talking" in u for u in users):
+            # -voice is authoritative when available, including stop-talking.
+            self.talking = {
+                _int(u.get("clid")) for u in users
+                if u.get("client_flag_talking") == "1"
+            }
+        else:
+            # When -voice is unsupported, use subscribed talk events.
+            self.talking.intersection_update(current_ids)
         name = "TeamSpeak 3"
         try:
             server = conn.command("servervariable virtualserver_name")
