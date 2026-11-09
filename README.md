@@ -13,6 +13,18 @@ Windows 10/11, 64-bit. Eigen TeamSpeak-verbinding en Opus-audio-engine uit dezel
 
 Je TeamSpeak-identiteit wordt bij de eerste start lokaal aangemaakt en voor volgende verbindingen bewaard in de Windows AppData-map. Bewaar een back-up van de identiteit als je serverrechten aan je account hebt gekoppeld.
 
+## Microfoonherkenning en verbinding herstellen
+
+Deze update is gebaseerd op de architectuur van [TS-Heerlen-3D-Cafe](https://github.com/michiel66/TS-Heerlen-3D-Cafe): een TeamSpeak-verbinding blijft actief als er iets misgaat met het afzonderlijke audioapparaat.
+
+- Klik op **Instellingen** en kies bij **Windows microfoon** het gewenste apparaat. De app toont alle door Windows/CPAL herkende opnameapparaten en **Standaard (Windows)**.
+- Klik op **Opslaan**. Als je al verbonden bent en een andere microfoon selecteert, verbreekt de app de verbinding bewust één keer om met het nieuwe apparaat opnieuw te verbinden.
+- De audio-engine gebruikt het door de microfoon ondersteunde opnameformaat (bijvoorbeeld 44.100 Hz stereo of 48.000 Hz mono) en zet dat om naar 48.000 Hz mono voor TeamSpeak Opus.
+- Wanneer geen opnameapparaat kan worden gestart, blijft de TeamSpeak-serververbinding actief en blijven de kanalen/chat/online gebruikers zichtbaar. PTT is dan uitgeschakeld.
+- Controleer bij een ontbrekende microfoon Windows **Instellingen > Privacy en beveiliging > Microfoon > Desktop-apps toegang tot microfoon geven**, daarna **Systeem > Geluid > Invoer**. Herstart de app na het aanpassen van de Windows-toestemming.
+- Als ook de luidspreker niet kan worden gestart, wordt dat apart gemeld zonder de TeamSpeak-verbinding te beëindigen.
+- De unit tests controleren de omzetting van 44,1 kHz stereo naar 48 kHz mono; echte microfoons en de live server moeten op een Windows-pc worden getest.
+
 ## Techniek en beperkingen
 
 - De Windows-interface is gebouwd met PySide6. De zelfstandige TeamSpeak-verbinding draait in een eigen Rust-proces dat via JSON-pipes met de app communiceert.
