@@ -29,11 +29,39 @@ def engine_path() -> Path:
     return next((p for p in candidates if p.is_file()), candidates[0])
 
 
+def list_microphones() -> list[str]:
+    """Read CPAL device names from the bundled native engine (without connecting)."""
+    defaults = ["Standaard (Windows)"]
+    exe = engine_path()
+    if not exe.is_file():
+        return defaults
+    try:
+        result = subprocess.run(
+            [str(exe), "--list-microphones"], capture_output=True, text=True,
+            encoding="utf-8", timeout=5, check=False,
+            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+        )
+        if result.returncode != 0:
+            return defaults
+        for line in result.stdout.splitlines():
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            names = data.get("microphones", [])
+            if data.get("type") == "devices" and isinstance(names, list):
+                return defaults + [n for n in names if isinstance(n, str) and n and n not in defaults]
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        pass
+    return defaults
+
+
 class NativeWorker(threading.Thread):
     """A single connection with UI-thread-safe snapshot and status callbacks."""
 
     def __init__(self, nickname: str, publish: Callable[[dict], None],
-                 notify: Callable[[str], None], *, roger_enabled: bool = False):
+                 notify: Callable[[str], None], *, roger_enabled: bool = False,
+                 microphone: str = "Standaard (Windows)"):
         super().__init__(daemon=True, name="HeerlenNativeEngine")
         # Nickname validation uses the same rules as our connection link helper.
         make_uri(nickname)
@@ -41,6 +69,7 @@ class NativeWorker(threading.Thread):
         self.publish = publish
         self.notify = notify
         self.roger_enabled = roger_enabled
+        self.microphone = microphone
         self.commands: queue.Queue[dict] = queue.Queue()
         self.stop_event = threading.Event()
         self.proc: subprocess.Popen | None = None
@@ -83,6 +112,8 @@ class NativeWorker(threading.Thread):
                 if kind == "snapshot":
                     self.connected = bool(event.get("connected"))
                     self.publish(event)
+                elif kind == "audio_status":
+                    self.notify("Audio: microfoon " + ("gereed" if event.get("mic_ready") else "niet beschikbaar") + "; luidspreker " + ("gereed" if event.get("output_ready") else "niet beschikbaar"))
                 elif kind in ("notice", "chat"):
                     self.notify(str(event.get("message", ""))[:1500])
                 elif kind == "error":
@@ -107,7 +138,7 @@ class NativeWorker(threading.Thread):
         try:
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             self.proc = subprocess.Popen(
-                [str(exe), self.nickname, str(identity)],
+                [str(exe), self.nickname, str(identity), self.microphone],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
