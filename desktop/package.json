@@ -1,0 +1,50 @@
+{
+  "name": "teamspeak-heerlen-pc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TeamSpeak Heerlen PC met bewezen PTTConnect Chromium-microfoon en onafhankelijke TeamSpeak client",
+  "main": "main.cjs",
+  "scripts": {
+    "dist": "electron-builder --win portable nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "nl.teamspeak.heerlen.pc",
+    "productName": "TeamSpeak Heerlen PC",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "package.json",
+      "Heerlen.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime"
+      }
+    ],
+    "win": {
+      "icon": "Heerlen.ico",
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "artifactName": "TeamSpeak-Heerlen-PC-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "Heerlen.ico",
+      "uninstallerIcon": "Heerlen.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TeamSpeak Heerlen PC"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

@@ -1,98 +1,138 @@
-name: Bouw Teamspeak Heerlen PC EXE
+name: TeamSpeak Heerlen PC - PTTConnect audio - Windows EXE
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "main.py"
-      - "heerlen/**"
+      - "desktop/**"
       - "assets/**"
       - "build_icon.py"
-      - "requirements.txt"
-      - "tests/**"
-      - "native/**"
       - ".github/workflows/windows-exe.yml"
 
 permissions:
   contents: read
 
 jobs:
-  windows-exe:
-    name: Windows 64-bit EXE bouwen
+  build-windows:
+    name: Windows portable + setup (bewezen PTTConnect audio)
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      WEBSPEAK3_COMMIT: c2b52b323d2ef10e388b2b600444a98390c5cc7a
+      PTTCONNECT_COMMIT: d4d394c8d30a002afc38b64e810f4e81edff5554
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
-      - name: Project ophalen
+      - name: Heerlen PC code ophalen
         uses: actions/checkout@v4
-      - name: Python installeren
+
+      - name: Node.js 22 instellen
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Python 3.12 instellen
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          architecture: x64
-          cache: pip
-      - name: Pakketten installeren
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt "pyinstaller>=6.11,<7" "Pillow>=11,<13"
-      - name: Unit tests uitvoeren
-        run: python -m unittest discover -s tests -v
-      - name: Rust toolchain installeren
+
+      - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust broncode van Android-audio-engine ophalen
-        uses: actions/checkout@v4
-        with:
-          repository: wslinnn/tslib_multi
-          ref: 8e0bc1150b548f31e0cc859ae8b9d488bd355038
-          path: tslib
-
-      - name: Zelfstandige Windows-audio-engine toevoegen
-        shell: pwsh
+      - name: Werkende PTTConnect PC-bron exact vastpinnen
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path 'tslib/examples/heerlen-desktop' | Out-Null
-          Copy-Item -Path 'native/Cargo.toml' -Destination 'tslib/examples/heerlen-desktop/Cargo.toml'
-          Copy-Item -Path 'native/src' -Destination 'tslib/examples/heerlen-desktop/src' -Recurse
-          $cargo = 'tslib/Cargo.toml'
-          $contents = Get-Content -Path $cargo -Raw
-          $contents = $contents.Replace('"examples/send-msg",', '"examples/send-msg",' + "`n" + '    "examples/heerlen-desktop",')
-          Set-Content -Path $cargo -Value $contents
+          git clone https://github.com/michiel66/PTTConnect-PC.git ptt-template
+          cd ptt-template
+          git checkout "$PTTCONNECT_COMMIT"
 
-      - name: Native Rust TeamSpeak-client met Opus RX/TX bouwen
-        shell: pwsh
+      - name: Officiele WebSpeak3 client exact vastpinnen
+        shell: bash
+        run: |
+          git clone --recurse-submodules https://github.com/WebSpeak3/webspeak3.git ptt-template/upstream
+          cd ptt-template/upstream
+          git checkout "$WEBSPEAK3_COMMIT"
+          git submodule update --init --recursive
+
+      - name: Bestaande werkende PTTConnect client en PTT toepassen
+        shell: bash
+        working-directory: ptt-template
+        run: python windows/patch_webspeak3.py
+
+      - name: Heerlen naam, PTT, rogerpiep, achtergronden en vaste server toevoegen
+        run: python desktop/patch_heerlen.py
+
+      - name: Controleer dat Chromium-microfooncode actief blijft
+        shell: bash
+        run: |
+          grep -F 'navigator.mediaDevices.getUserMedia' ptt-template/upstream/web/src/voice.ts
+          grep -F 'setPushToTalk' ptt-template/upstream/web/src/App.tsx
+          grep -F 'heerlen.mijnts3.nl' ptt-template/upstream/web/src/App.tsx
+
+      - name: Zelfstandige TeamSpeak-connector compileren
+        shell: bash
+        run: |
+          cd ptt-template/upstream/connector
+          cargo build --release
+
+      - name: Browser/TeamSpeak gateway compileren
+        shell: bash
+        run: |
+          cd ptt-template/upstream/gateway
+          npm ci
+          npm run build
+          npm prune --omit=dev
+
+      - name: Heerlen gebruikersinterface bouwen
+        shell: bash
         env:
-          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+          VITE_DONATE_URL: ""
         run: |
-          cargo build --release -p heerlen-native --manifest-path tslib/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "Rust audio-engine build mislukt" }
-          New-Item -ItemType Directory -Force -Path 'native/bin' | Out-Null
-          Copy-Item 'tslib/target/release/heerlen-native.exe' 'native/bin/heerlen-native.exe'
-          if (-not (Test-Path "native/bin/heerlen-native.exe")) { throw "Audio-engine ontbreekt" }
+          cd ptt-template/upstream/web
+          npm ci
+          npm run build
 
-      - name: Test automatische microfoonformaten (44100 stereo en 48000 mono)
+      - name: Runtime van echte TeamSpeak RX/TX en microfoon verpakken
+        shell: bash
+        run: |
+          mkdir -p desktop/runtime/web desktop/runtime/gateway desktop/runtime/connector
+          cp -R ptt-template/upstream/web/dist/. desktop/runtime/web/
+          cp -R ptt-template/upstream/gateway/dist desktop/runtime/gateway/dist
+          cp -R ptt-template/upstream/gateway/node_modules desktop/runtime/gateway/node_modules
+          cp ptt-template/upstream/connector/target/release/ts-connector.exe desktop/runtime/connector/ts-connector.exe
+          cp ptt-template/upstream/LICENSE desktop/runtime/LICENSE-WebSpeak3.txt
+
+      - name: Heerlen logo en ICO genereren
+        shell: bash
+        run: |
+          python -m pip install "Pillow>=11,<13" "cairosvg>=2,<3"
+          python build_icon.py
+          cp assets/heerlen.ico desktop/Heerlen.ico
+
+      - name: Windows Portable EXE en Setup EXE maken
+        shell: bash
+        run: |
+          cd desktop
+          npm install --no-audit --no-fund
+          npm run dist
+
+      - name: Windows EXEs controleren en SHA256 maken
         shell: pwsh
         run: |
-          cargo test --release -p heerlen-native --manifest-path tslib/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "Windows-microfoon omzettingstest mislukt" }
-
-      - name: Windows-icoon genereren
-        run: python build_icon.py
-      - name: Windows EXE bouwen
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Teamspeak-Heerlen-PC" --icon "assets/heerlen.ico" --add-data "assets/logo.svg;assets" --add-binary "native/bin/heerlen-native.exe;." main.py
-      - name: EXE controleren en checksum maken
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "dist/Teamspeak-Heerlen-PC.exe")) {
-            throw "EXE ontbreekt."
+          $exes = @(Get-ChildItem -Path 'desktop/dist' -Filter '*.exe' -File)
+          if ($exes.Count -lt 2) { throw "Portable EXE of Setup EXE ontbreekt" }
+          foreach ($exe in $exes) {
+            $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+            "$hash  $($exe.Name)" | Out-File -Append 'desktop/dist/sha256.txt' -Encoding ascii
           }
-          $hash = (Get-FileHash "dist/Teamspeak-Heerlen-PC.exe" -Algorithm SHA256).Hash
-          "$hash  Teamspeak-Heerlen-PC.exe" | Out-File -FilePath "dist/Teamspeak-Heerlen-PC.exe.sha256" -Encoding ascii
-      - name: EXE aanbieden als download
+
+      - name: Heerlen Windows downloads beschikbaar stellen
         uses: actions/upload-artifact@v4
         with:
-          name: Teamspeak-Heerlen-PC-Windows-EXE
+          name: TeamSpeak-Heerlen-PC-PTTConnect-Windows
           path: |
-            dist/Teamspeak-Heerlen-PC.exe
-            dist/Teamspeak-Heerlen-PC.exe.sha256
+            desktop/dist/*.exe
+            desktop/dist/sha256.txt
           if-no-files-found: error
           retention-days: 30
