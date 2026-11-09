@@ -5,16 +5,20 @@ from collections import defaultdict
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QKeyEvent
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSplitter,
     QStackedWidget, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from heerlen.query import ClientQueryWorker, sort_channel_tree
-from heerlen.storage import get_api_key, load_settings, save_settings, set_api_key
+from heerlen.query import sort_channel_tree
+from heerlen.storage import load_settings, save_settings
+from heerlen.native import NativeWorker
+from heerlen.connect import SERVER, make_uri
+from heerlen.hotkeys import PTT_CHOICES, is_pressed
+from heerlen.background import BACKGROUNDS, BackgroundWidget, store_wallpaper
 
 CYAN = "#16d6ff"
 GREEN = "#37ef7f"
@@ -23,7 +27,7 @@ TEXT = "#f2f9ff"
 STYLES = """
 * { font-family: "Segoe UI"; font-size: 13px; color: #f2f9ff; }
 QMainWindow, QDialog { background: #030c1b; }
-QWidget#AppRoot { background: #030c1b; }
+QWidget#AppRoot { background: transparent; }
 QFrame#Panel { background: #0a2038; border: 1px solid #21547b;
                 border-radius: 15px; }
 QFrame#Top { background: #06182d; border-bottom: 1px solid #19527b; }
@@ -81,39 +85,57 @@ class Bridge(QObject):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
+    """User preferences only; never asks ordinary users for a ClientQuery key."""
+
+    def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Instellingen — Teamspeak Heerlen PC")
-        self.setMinimumWidth(510)
+        self.setMinimumWidth(520)
         self.setStyleSheet(STYLES)
-        layout = box(self, spacing=16, margins=(22, 22, 22, 22))
-        title = QLabel("TeamSpeak 3 • ClientQuery")
+        self.selected_wallpaper = ""
+        layout = box(self, spacing=15, margins=(22, 22, 22, 22))
+
+        title = QLabel("PERSOONLIJKE INSTELLINGEN")
         title.setObjectName("Section")
         layout.addWidget(title)
-        help_text = QLabel(
-            "Start TeamSpeak 3 en zet de ClientQuery-plugin aan.\n"
-            "Open in TS3: Extra/Tools → Opties/Options → Addons →\n"
-            "ClientQuery → Instellingen/Settings. Kopieer daar de API-sleutel.\n\n"
-            "De PC-app werkt via je bestaande TeamSpeak 3-client."
+        info = QLabel(
+            "Server: heerlen.mijnts3.nl • direct verbonden zonder TeamSpeak 3.\n"
+            "Je hoeft alleen je gebruikersnaam te kiezen op het hoofdscherm."
         )
-        help_text.setWordWrap(True)
-        layout.addWidget(help_text)
-        layout.addWidget(QLabel("ClientQuery API-sleutel"))
-        self.key_field = QLineEdit(get_api_key())
-        self.key_field.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key_field.setPlaceholderText("Plak je ClientQuery API-sleutel")
-        layout.addWidget(self.key_field)
-        self.show_key = QCheckBox("Toon sleutel")
-        self.show_key.toggled.connect(
-            lambda visible: self.key_field.setEchoMode(
-                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
-            )
-        )
-        layout.addWidget(self.show_key)
-        info = QLabel("De sleutel wordt opgeslagen in Windows Credential Manager, niet in een tekstbestand.")
-        info.setObjectName("Hint")
         info.setWordWrap(True)
         layout.addWidget(info)
+        layout.addWidget(QLabel("Mijn PTT-toets of muisknop"))
+        self.ptt_choice = QComboBox()
+        for choice in PTT_CHOICES:
+            self.ptt_choice.addItem(choice)
+        selected = config.get("ptt_key", "F9")
+        self.ptt_choice.setCurrentText(selected if selected in PTT_CHOICES else "F9")
+        layout.addWidget(self.ptt_choice)
+        hint = QLabel("Deze toets werkt ook buiten het Heerlen-venster. "
+                      "Kies een toets die niet met andere programma's botst.")
+        hint.setObjectName("Hint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.roger_checkbox = QCheckBox("3-tonige rogerpiep na loslaten PTT")
+        self.roger_checkbox.setChecked(bool(config.get("roger", True)))
+        layout.addWidget(self.roger_checkbox)
+        explanation = QLabel(
+            "De 3 tonen worden aan het einde van je uitzending via TeamSpeak "
+            "naar het kanaal verstuurd (niet alleen lokaal afgespeeld)."
+        )
+        explanation.setObjectName("Hint")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        layout.addWidget(QLabel("Achtergrond"))
+        self.wallpaper_combo = QComboBox()
+        self.wallpaper_combo.addItems(list(BACKGROUNDS))
+        self.wallpaper_combo.setCurrentText(config.get("background", "Nachtblauw"))
+        layout.addWidget(self.wallpaper_combo)
+        choose_button = QPushButton("Eigen afbeelding kiezen (PNG, JPG, WEBP)")
+        choose_button.clicked.connect(self.choose_wallpaper)
+        layout.addWidget(choose_button)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -121,8 +143,30 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def save_key(self) -> bool:
-        return set_api_key(self.key_field.text())
+    def choose_wallpaper(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Selecteer je achtergrond", "",
+            "Afbeeldingen (*.png *.jpg *.jpeg *.webp)"
+        )
+        if filename:
+            self.selected_wallpaper = filename
+            self.wallpaper_combo.setCurrentText("Eigen afbeelding")
+
+    def accept(self):
+        if self.selected_wallpaper:
+            try:
+                store_wallpaper(self.selected_wallpaper)
+            except (ValueError, OSError) as exc:
+                QMessageBox.warning(self, "Ongeldige achtergrond", str(exc))
+                return
+        super().accept()
+
+    def values(self) -> dict:
+        return {
+            "ptt_key": self.ptt_choice.currentText(),
+            "roger": self.roger_checkbox.isChecked(),
+            "background": self.wallpaper_combo.currentText(),
+        }
 
 
 class MainWindow(QMainWindow):
@@ -143,9 +187,15 @@ class MainWindow(QMainWindow):
         self.bridge.notice.connect(self.show_notice)
         self._tree_signature = None
         self._ptt_pressed = False
+        self._button_ptt_held = False
+        self._hotkey_held = False
+        self._requested_connection = False
         self._create_ui()
         self.switch_view(self.current_view)
-        self.start_worker()
+        self.ptt_timer = QTimer(self)
+        self.ptt_timer.setInterval(30)
+        self.ptt_timer.timeout.connect(self._poll_hotkey)
+        self.ptt_timer.start()
 
     @staticmethod
     def _asset(filename: str) -> Path:
@@ -153,8 +203,10 @@ class MainWindow(QMainWindow):
         return root / "assets" / filename
 
     def _create_ui(self):
-        root = QWidget()
+        root = BackgroundWidget()
         root.setObjectName("AppRoot")
+        root.set_preset(self.cfg.get("background", "Nachtblauw"))
+        self.background_view = root
         self.setCentralWidget(root)
         layout = box(root, spacing=0)
 
@@ -174,6 +226,20 @@ class MainWindow(QMainWindow):
         self.setup_btn.clicked.connect(self.open_settings)
         branding.addWidget(self.setup_btn)
         top_layout.addLayout(branding)
+
+        join_row = box(vertical=False, spacing=9)
+        self.nickname_field = QLineEdit(str(self.cfg.get("nickname", "")))
+        self.nickname_field.setPlaceholderText("Vul hier jouw TeamSpeak-naam in...")
+        self.nickname_field.setMaxLength(30)
+        self.nickname_field.returnPressed.connect(self.toggle_connection)
+        join_row.addWidget(self.nickname_field, 1)
+        self.join_server_btn = QPushButton("●  Verbinden met Heerlen")
+        self.join_server_btn.clicked.connect(self.toggle_connection)
+        join_row.addWidget(self.join_server_btn)
+        top_layout.addLayout(join_row)
+        server_label = QLabel(f"VASTE SERVER: {SERVER}  •  GEEN ANDERE TEAM SPEAK APP NODIG")
+        server_label.setObjectName("Hint")
+        top_layout.addWidget(server_label)
 
         head_controls = box(vertical=False)
         self.status_label = QLabel("●  Wachten op TeamSpeak 3...")
@@ -288,13 +354,13 @@ class MainWindow(QMainWindow):
         self.ptt_button = QPushButton("PTT")
         self.ptt_button.setObjectName("PTT")
         self.ptt_button.setMinimumSize(200, 92)
-        self.ptt_button.pressed.connect(self.press_ptt)
-        self.ptt_button.released.connect(self.release_ptt)
+        self.ptt_button.pressed.connect(self.on_ptt_button_pressed)
+        self.ptt_button.released.connect(self.on_ptt_button_released)
         ptt_col.addWidget(self.ptt_button)
         row.addLayout(ptt_col)
         lower_layout.addLayout(row)
         layout.addWidget(lower)
-        self.statusBar().showMessage("TeamSpeak 3 met ClientQuery-plugin vereist.")
+        self.statusBar().showMessage(f"Vaste server: {SERVER} • vul je naam in en druk op Verbinden.")
         self._set_connected(False)
 
     def switch_view(self, view: str):
@@ -311,25 +377,54 @@ class MainWindow(QMainWindow):
             button.setChecked(key == name)
         self.refresh_monitor()
 
+    def toggle_connection(self):
+        if self._requested_connection:
+            self.disconnect_server()
+        else:
+            self.start_worker()
+
     def start_worker(self):
+        nickname = self.nickname_field.text().strip()
+        try:
+            make_uri(nickname)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Vul je naam in", str(exc))
+            return
+        self.cfg["nickname"] = nickname
+        save_settings(self.cfg)
         if self.worker is not None:
             self.worker.stop()
-            self.worker.join(timeout=6.0)
-        self.worker = ClientQueryWorker(
-            get_api_key(), self.bridge.snapshot.emit, self.bridge.notice.emit
+            self.worker.join(timeout=5.0)
+        self.worker = NativeWorker(
+            nickname, self.bridge.snapshot.emit, self.bridge.notice.emit,
+            roger_enabled=bool(self.cfg.get("roger", True)),
         )
+        self._requested_connection = True
+        self.join_server_btn.setText("■  Verbinding verbreken")
+        self.nickname_field.setEnabled(False)
+        self.statusBar().showMessage(f"Verbinden met {SERVER}...")
         self.worker.start()
 
+    def disconnect_server(self):
+        self.release_ptt()
+        if self.worker is not None:
+            self.worker.stop()
+            self.worker.join(timeout=5.0)
+            self.worker = None
+        self._requested_connection = False
+        self.nickname_field.setEnabled(True)
+        self.join_server_btn.setText("●  Verbinden met Heerlen")
+        self.show_snapshot({"connected": False, "problem": "Verbinding verbroken."})
+
     def open_settings(self):
-        dialog = SettingsDialog(self)
+        dialog = SettingsDialog(self.cfg, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            if not dialog.save_key():
-                QMessageBox.warning(
-                    self, "Opslaan mislukt",
-                    "De API-sleutel kon niet in Windows Credential Manager worden opgeslagen."
-                )
-                return
-            self.start_worker()
+            self.cfg.update(dialog.values())
+            save_settings(self.cfg)
+            self.background_view.set_preset(self.cfg.get("background", "Nachtblauw"))
+            if self.worker is not None:
+                self.send_command("roger", "1" if self.cfg.get("roger") else "0")
+            self.statusBar().showMessage("Persoonlijke instellingen opgeslagen.", 6000)
 
     def send_command(self, kind: str, payload: str = ""):
         if self.worker is not None:
@@ -342,13 +437,37 @@ class MainWindow(QMainWindow):
         if cid is not None:
             self.send_command("join", str(cid))
 
+    def on_ptt_button_pressed(self):
+        self._button_ptt_held = True
+        self.press_ptt()
+
+    def on_ptt_button_released(self):
+        self._button_ptt_held = False
+        if not self._hotkey_held:
+            self.release_ptt()
+
+    def _poll_hotkey(self):
+        # Lightweight Windows key-state check, only for the user's selected key.
+        key = str(self.cfg.get("ptt_key", "F9"))
+        held = is_pressed(key)
+        if held != self._hotkey_held:
+            self._hotkey_held = held
+            if held:
+                self.press_ptt()
+            elif not self._button_ptt_held:
+                self.release_ptt()
+        if self.worker is not None and self._requested_connection and not self.worker.is_alive():
+            self._requested_connection = False
+            self.join_server_btn.setText("●  Verbinden met Heerlen")
+            self.nickname_field.setEnabled(True)
+
     def press_ptt(self):
         if not self.latest.get("connected") or self._ptt_pressed:
             return
         self._ptt_pressed = True
         self.send_command("ptt_on")
-        self.ptt_button.setText("PTT ●")
-        self.statusBar().showMessage("PTT ingedrukt: TeamSpeak-microfoon tijdelijk open.")
+        self.ptt_button.setText("TX ●")
+        self.statusBar().showMessage("PTT actief: de native audio-engine zendt naar Heerlen.")
 
     def release_ptt(self):
         if not self._ptt_pressed:
@@ -356,20 +475,6 @@ class MainWindow(QMainWindow):
         self._ptt_pressed = False
         self.send_command("ptt_off")
         self.ptt_button.setText("PTT")
-
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_F9 and not event.isAutoRepeat():
-            self.press_ptt()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def keyReleaseEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_F9 and not event.isAutoRepeat():
-            self.release_ptt()
-            event.accept()
-            return
-        super().keyReleaseEvent(event)
 
     def send_chat(self):
         value = self.chat_input.text().strip()
