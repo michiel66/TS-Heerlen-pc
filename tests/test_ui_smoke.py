@@ -13,6 +13,11 @@ class UISmokeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.processEvents()
+        cls.app.quit()
+
     def test_main_window_initializes_without_clientquery(self):
         window = MainWindow()
         try:
@@ -21,7 +26,9 @@ class UISmokeTests(unittest.TestCase):
             self.assertFalse(window.ptt_button.isEnabled())
             self.assertEqual(window.background_view.preset, window.cfg.get("background", "Nachtblauw"))
         finally:
+            window.ptt_timer.stop()
             window.close()
+            window.deleteLater()
 
     def test_without_microphone_server_stays_connected(self):
         window = MainWindow()
@@ -36,7 +43,9 @@ class UISmokeTests(unittest.TestCase):
             window.press_ptt()
             self.assertFalse(window._ptt_pressed)
         finally:
+            window.ptt_timer.stop()
             window.close()
+            window.deleteLater()
 
     def test_user_settings(self):
         dialog = SettingsDialog({"ptt_key": "F10", "roger": False, "background": "Neon paars"})
