@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -502,6 +502,12 @@ class MainWindow(QMainWindow):
             )
             item.setForeground(QBrush(QColor(GREEN if active else TEXT)))
             self.monitor_list.addItem(item)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
+            # Never leave the microphone open after switching away from this app.
+            self.release_ptt()
+        super().changeEvent(event)
 
     def closeEvent(self, event):
         self.release_ptt()
