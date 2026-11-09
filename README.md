@@ -1,53 +1,39 @@
-# Teamspeak Heerlen PC — zelfstandige Windows-client
+# TeamSpeak Heerlen PC — Windows EXE
 
-Windows 10/11, 64-bit. Eigen TeamSpeak-verbinding en Opus-audio-engine uit dezelfde Rust-familie als de Android-versie (`tslib_multi`). **Er is geen TeamSpeak 3-desktopprogramma of ClientQuery API-sleutel nodig.**
+**Nieuwe audiobasis (november 2026): gebaseerd op de werkende PTTConnect-PC.**
+De eerdere PySide6/Rust-audioversie herkende op sommige Windows-pc's geen microfoon. Daarom bouwt de nieuwste workflow geen CPAL-variant meer, maar een Windows-app met dezelfde **Chromium getUserMedia()/WebAudio microfoonketen** en TeamSpeak gateway/Opus connector als de werkende PTTConnect-PC.
 
-## Voor gebruikers
+## Zo werkt het
 
-1. Start `Teamspeak-Heerlen-PC.exe`.
-2. Typ je gebruikersnaam in en klik **Verbinden met Heerlen**. De server is vast ingesteld op **heerlen.mijnts3.nl**.
-3. Via **Instellingen** kies je de PTT-toets (F6-F12, spatie, rechter Ctrl/Alt of muis-zijknop).
-4. Zet de **3-tonige rogerpiep** aan of uit. De tonen worden bij loslaten PTT naar het TeamSpeak-kanaal verstuurd.
-5. Kies een achtergrond: Nachtblauw, Radio groen, Neon paars, Zwart of een eigen PNG/JPG/WEBP-afbeelding.
-6. Bekijk de kanalen en live gebruikersmonitor, wissel met dubbelklik van kanaal en gebruik kanaalchat.
+1. Download de nieuwste **groene** build uit [Windows Actions](https://github.com/michiel66/TS-Heerlen-pc/actions/workflows/windows-exe.yml).
+2. Pak het artifact **TeamSpeak-Heerlen-PC-PTTConnect-Windows** uit.
+3. Gebruik de **portable EXE** zonder installatie, of kies de **Setup EXE**.
+4. Vul de TeamSpeak-naam in en klik **Verbinden met Heerlen**. De server is vast ingesteld op **heerlen.mijnts3.nl**.
+5. Selecteer zo nodig microfoon en luidspreker onder **Settings → Recording / Playback**; de keuzelijsten en microfoontest gebruiken Windows via Chromium.
+6. Gebruik de grote **PTT**-knop (ingedrukt houden) of stel onder **Settings → Hotkeys** een PTT-toets in. De toetsen werken in het app-venster.
+7. Zet de **3-tonige rogerpiep** aan/uit, kies de achtergrond (Nachtblauw, Radio groen, Neon paars of Zwart). Deze voorkeuren blijven lokaal bewaard.
 
-Je TeamSpeak-identiteit wordt bij de eerste start lokaal aangemaakt en voor volgende verbindingen bewaard in de Windows AppData-map. Bewaar een back-up van de identiteit als je serverrechten aan je account hebt gekoppeld.
+## Verschil met de eerdere builds
 
-## Microfoonherkenning en verbinding herstellen
+- **Wel:** TeamSpeak direct verbinden zonder geïnstalleerde TeamSpeak 3-client; Opus RX/TX; echte audioapparaatkeuze en microfoon-test; kanalen, gebruikers en PTT via de beproefde PTTConnect-keten.
+- **Niet:** De oude PySide6-client is niet de nieuwe Windows-runtime. De bestaande Qt/Rust-bestanden blijven in de repository staan als historisch materiaal maar worden niet meer verpakt.
+- De Windows-app gebruikt een Electron/Chromium-interface in plaats van de oude Qt-interface. De naam en kleuren zijn op Heerlen afgestemd. De bron van PTTConnect zelf wordt **niet gewijzigd**.
+- De rogerpiep wordt na het loslaten van de grote PTT-knop via de reguliere TeamSpeak audioweg verzonden. Een ingestelde toetsenbord-PTT gebruikt de originele PTTConnect-routine; de rogerpiep is daar momenteel nog niet aan gekoppeld.
+- Verbindingscontrole en echte geluidskwaliteit zijn afhankelijk van de TeamSpeak-server, Windows-microfoontoegang en daadwerkelijke hardware. **Een groene CI-build bevestigt niet dat een fysieke microfoon op jouw pc werkt.**
+- Een serverwachtwoord of gebruikersrechten van TeamSpeak blijven gelden; de app omzeilt die niet.
+- Het project bevat beide oude en nieuwe implementaties om bestaande code niet te verliezen.
 
-Deze update is gebaseerd op de architectuur van [TS-Heerlen-3D-Cafe](https://github.com/michiel66/TS-Heerlen-3D-Cafe): een TeamSpeak-verbinding blijft actief als er iets misgaat met het afzonderlijke audioapparaat.
+## Bron en licenties
 
-- Klik op **Instellingen** en kies bij **Windows microfoon** het gewenste apparaat. De app toont alle door Windows/CPAL herkende opnameapparaten en **Standaard (Windows)**.
-- Klik op **Opslaan**. Als je al verbonden bent en een andere microfoon selecteert, verbreekt de app de verbinding bewust één keer om met het nieuwe apparaat opnieuw te verbinden.
-- De audio-engine gebruikt het door de microfoon ondersteunde opnameformaat (bijvoorbeeld 44.100 Hz stereo of 48.000 Hz mono) en zet dat om naar 48.000 Hz mono voor TeamSpeak Opus.
-- Wanneer geen opnameapparaat kan worden gestart, blijft de TeamSpeak-serververbinding actief en blijven de kanalen/chat/online gebruikers zichtbaar. PTT is dan uitgeschakeld.
-- Controleer bij een ontbrekende microfoon Windows **Instellingen > Privacy en beveiliging > Microfoon > Desktop-apps toegang tot microfoon geven**, daarna **Systeem > Geluid > Invoer**. Herstart de app na het aanpassen van de Windows-toestemming.
-- De luidspreker gebruikt nu eveneens het daadwerkelijke door Windows ondersteunde formaat (zoals 48 kHz stereo) en past inkomende TeamSpeak Opus-spraak daarop aan. Als een uitvoerapparaat niet kan worden gestart, wordt dat apart gemeld zonder de TeamSpeak-verbinding te beëindigen.
-- De unit tests controleren de omzetting van 44,1 kHz stereo naar 48 kHz mono; echte microfoons en de live server moeten op een Windows-pc worden getest.
+De nieuwe Windows-build gebruikt vastgepinde versies van:
+- [PTTConnect-PC](https://github.com/michiel66/PTTConnect-PC), commit `d4d394c8d30a002afc38b64e810f4e81edff5554`. De workflow voert het bestaande werkende patchscript op de eigen checkout uit.
+- [WebSpeak3](https://github.com/WebSpeak3/webspeak3), commit `c2b52b323d2ef10e388b2b600444a98390c5cc7a`. MIT-licentie (Copyright 2026 Moepchi), verstrekt in de Windows runtime.
+- Eigen Heerlen-wijzigingen: `desktop/main.cjs`, `desktop/patch_heerlen.py`, `desktop/package.json`.
 
-## Techniek en beperkingen
+De oorspronkelijke Android-app, PTTConnect-PC en 3D Café blijven intact. Dit is geen officiële TeamSpeak-client.
 
-- De Windows-interface is gebouwd met PySide6. De zelfstandige TeamSpeak-verbinding draait in een eigen Rust-proces dat via JSON-pipes met de app communiceert.
-- Rust-dependencies: `tslib-core`, `tslib-audio`, `tsclientlib`, Opus en Windows audio (WASAPI).
-- De Windows-build haalt een vastgepinde versie van `wslinnn/tslib_multi` op. De native engine wordt door PyInstaller als extra binary in de EXE opgenomen.
-- Nog geen praktijkverificatie met de echte Heerlen-server, microfoon, luidspreker, kanaalrechten en rogerpiep. Een geslaagde GitHub-build controleert het compileren, niet alle apparaten.
-- PTT is een door de gebruiker gekozen toets of muisknop, die ook werkt buiten het app-venster.
-- De server kan alsnog een wachtwoord, beveiligingsniveau of andere rechten eisen. De app omzeilt die niet.
-- Een geselecteerde afbeelding wordt verkleind opgeslagen in de lokale instellingenmap.
-- TeamSpeak is een handelsmerk van de betreffende rechthebbende; dit is geen officiële TeamSpeak-client.
+## Voor ontwikkelaars
 
-## EXE downloaden en bouwen
+De workflow `.github/workflows/windows-exe.yml` bouwt op Windows. Daarin worden de PTTConnect- en WebSpeak3-bronnen opgehaald op **vaste commits**, de bestaande PTTConnect-patch toegepast, vervolgens de Heerlen-voorkeuren en branding. Daarna worden de Rust connector, Node gateway, React webinterface en Electron portable/setup gebouwd.
 
-1. Open [GitHub Actions](https://github.com/michiel66/TS-Heerlen-pc/actions/workflows/windows-exe.yml).
-2. Kies de nieuwste **groene** run van `Bouw Teamspeak Heerlen PC EXE`.
-3. Download bij **Artifacts** `Teamspeak-Heerlen-PC-Windows-EXE` en pak de ZIP uit.
-4. Start `Teamspeak-Heerlen-PC.exe`.
-
-De GitHub Action compileert eerst de Rust-audio-engine en voert unit tests uit. Daarna maakt PyInstaller de Windows EXE.
-
-## Broncode en herkomst
-
-- Android-app: https://github.com/michiel66/TS-Heerlen-app (blijft intact).
-- Rust: https://github.com/wslinnn/tslib_multi (MIT/Apache-2.0).
-- Windows-bronbestanden: `native/src/main.rs`, `heerlen/native.py`, `heerlen/ui.py`, `heerlen/background.py`, `heerlen/hotkeys.py`, `heerlen/storage.py`.
-- PC-broncode: GPL-3.0-or-later; respecteer de licenties van alle gebruikte afhankelijkheden.
+De opgeslagen TeamSpeak-identiteit zit in de persoonlijke Electron app-opslag op de Windows-computer. Bewaar daarvan een back-up wanneer serverrechten aan die identiteit gekoppeld zijn.
